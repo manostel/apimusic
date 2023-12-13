@@ -1,0 +1,545 @@
+from flask import Flask, send_file, request, make_response
+from midiutil.MidiFile import MIDIFile
+import io
+from pydub import AudioSegment
+from pydub.generators import Sine
+import io
+import re
+
+app = Flask(__name__)
+
+# Define a function to convert ASCII characters to frequencies
+def ascii_to_frequency(char):
+    # Mapping of ASCII characters to frequencies
+    char_to_frequency = {
+    'A': 440.00,
+    'B': 466.16,
+    'C': 493.88,
+    'D': 523.25,
+    'E': 554.37,
+    'F': 587.33,
+    'G': 622.25,
+    'H': 659.26,
+    'I': 698.46,
+    'J': 739.99,
+    'K': 783.99,
+    'L': 830.61,
+    'M': 880.00,
+    'N': 932.33,
+    'O': 987.77,
+    'P': 1046.50,
+    'Q': 1108.73,
+    'R': 1174.66,
+    'S': 1244.51,
+    'T': 1318.51,
+    'U': 1396.91,
+    'V': 1479.98,
+    'W': 1567.98,
+    'X': 1661.22,
+    'Y': 1760.00,
+    'Z': 1864.66,
+    'a': 220.00,
+    'b': 233.08,
+    'c': 246.94,
+    'd': 261.63,
+    'e': 277.18,
+    'f': 293.66,
+    'g': 311.13,
+    'h': 329.63,
+    'i': 349.23,
+    'j': 369.99,
+    'k': 392.00,
+    'l': 415.30,
+    'm': 440.00,
+    'n': 466.16,
+    'o': 493.88,
+    'p': 523.25,
+    'q': 554.37,
+    'r': 587.33,
+    's': 622.25,
+    't': 659.26,
+    'u': 698.46,
+    'v': 739.99,
+    'w': 783.99,
+    'x': 830.61,
+    'y': 880.00,
+    'z': 932.33,
+    '0': 941.0,
+    '1': 697.0,
+    '2': 697.0,
+    '3': 697.0,
+    '4': 770.0,
+    '5': 770.0,
+    '6': 770.0,
+    '7': 852.0,
+    '8': 852.0,
+    '9': 852.0,
+    ' ': 0,  # Space character mapped to silence
+    '!': 1760.00,
+    '@': 1864.66,
+    '#': 220.00,
+    '$': 233.08,
+    '%': 246.94,
+    '^': 261.63,
+    '&': 277.18,
+    '*': 293.66,
+    '(': 311.13,
+    ')': 329.63,
+    '-': 349.23,
+    '_': 369.99,
+    '+': 392.00,
+    '=': 415.30,
+    '[': 440.00,
+    ']': 466.16,
+    '{': 493.88,
+    '}': 523.25,
+    '|': 554.37,
+    '\\': 587.33,
+    ';': 622.25,
+    ':': 659.26,
+    ',': 698.46,
+    '.': 739.99,
+    '/': 783.99,
+    '?': 830.61,
+    '<': 880.00,
+    '>': 932.33,
+    '`': 987.77,
+    '~': 1046.50,
+
+    # Add more characters and their frequencies as needed
+    }
+
+    return char_to_frequency.get(char, (0.0,))  # Default to (0.0,) if not found
+
+
+
+piano_notes = {
+    'A0': 27.50, 'A#0': 29.14, 'B0': 30.87,
+    'C1': 32.70, 'C#1': 34.65, 'D1': 36.71, 'D#1': 38.89, 'E1': 41.20, 'F1': 43.65, 'F#1': 46.25, 'G1': 49.00, 'G#1': 51.91, 'A1': 55.00, 'A#1': 58.27, 'B1': 61.74,
+    'C2': 65.41, 'C#2': 69.30, 'D2': 73.42, 'D#2': 77.78, 'E2': 82.41, 'F2': 87.31, 'F#2': 92.50, 'G2': 98.00, 'G#2': 103.83, 'A2': 110.00, 'A#2': 116.54, 'B2': 123.47,
+    'C3': 130.81, 'C#3': 138.59, 'D3': 146.83, 'D#3': 155.56, 'E3': 164.81, 'F3': 174.61, 'F#3': 185.00, 'G3': 196.00, 'G#3': 207.65, 'A3': 220.00, 'A#3': 233.08, 'B3': 246.94,
+    'C4': 261.63, 'C#4': 277.18, 'D4': 293.66, 'D#4': 311.13, 'E4': 329.63, 'F4': 349.23, 'F#4': 369.99, 'G4': 392.00, 'G#4': 415.30, 'A4': 440.00, 'A#4': 466.16, 'B4': 493.88,
+    'C5': 523.25, 'C#5': 554.37, 'D5': 587.33, 'D#5': 622.25, 'E5': 659.26, 'F5': 698.46, 'F#5': 739.99, 'G5': 783.99, 'G#5': 830.61, 'A5': 880.00, 'A#5': 932.33, 'B5': 987.77,
+    'C6': 1046.50, 'C#6': 1108.73, 'D6': 1174.66, 'D#6': 1244.51, 'E6': 1318.51, 'F6': 1396.91, 'F#6': 1479.98, 'G6': 1567.98, 'G#6': 1661.22, 'A6': 1760.00, 'A#6': 1864.66, 'B6': 1975.53,
+    'C7': 2093.00, 'C#7': 2217.46, 'D7': 2349.32, 'D#7': 2489.02, 'E7': 2637.02, 'F7': 2793.83, 'F#7': 2959.96, 'G7': 3135.96, 'G#7': 3322.44, 'A7': 3520.00, 'A#7': 3729.31, 'B7': 3951.07,
+    'C8': 4186.01,'SPACE': 0,
+    'A': 440.00, 'B': 493.88, 'C': 523.25, 'D': 587.33, 'E': 659.26, 'F': 698.46, 'G': 783.99,
+}
+
+@app.route("/playpianomp3", methods=["GET"])
+def play_piano_mp3():
+    ascii_text = request.args.get("ascii_text")
+
+    if ascii_text:
+        # Split the ASCII text into individual notes using regular expressions
+        notes = re.findall(r'\S+|\s', ascii_text)
+        print("Received Notes:", notes)
+
+        # Filter out notes that are not in the piano_notes dictionary
+        valid_notes = [note for note in notes if piano_notes.get(note.upper()) is not None or note == 'SPACE']
+        print("Valid Notes:", valid_notes)
+
+        # Check if the number of valid notes exceeds 500
+        if len(valid_notes) > 500:
+            return "Please provide less than 500 notes per request"
+
+        # Limit the total valid notes to 10
+        max_notes = 500
+        valid_notes = valid_notes[:max_notes]
+
+        # Generate audio based on valid notes
+        audio = AudioSegment.empty()
+
+        for note in valid_notes:
+            frequency = piano_notes.get(note.upper(), 0)
+            duration = 200  # Duration of the note in milliseconds
+
+            if note == 'SPACE':
+                # For space, create silence
+                note_audio = AudioSegment.silent(duration=duration)
+            else:
+                # Use Sine waveform for the music
+                note_audio = Sine(frequency).to_audio_segment(duration=duration)
+
+            audio += note_audio
+
+        # Reduce volume (example: reduce by 10 dB)
+        volume_reduction_db = -20  # Negative value reduces volume
+        audio = audio.apply_gain(volume_reduction_db)
+
+        # Export the audio as an MP3 file
+        output_file = io.BytesIO()
+        audio.export(output_file, format="mp3")
+
+        # Set the file pointer to the beginning
+        output_file.seek(0)
+
+        # Create a response object
+        response = make_response(output_file.read())
+
+        # Set the Content-Disposition and Content-Type headers
+        response.headers["Content-Disposition"] = "attachment; filename=piano_music.mp3"
+        response.headers['Content-Type'] = 'audio/mpeg'
+
+        return response
+
+    return "Please provide ASCII text in the 'ascii_text' parameter."
+
+
+
+
+@app.route("/playmp3", methods=["GET"])
+def ascii_to_music_bytes():
+    text = request.args.get("ascii_text")
+
+    if text is not None:
+        # Initialize an empty audio segment
+        audio = AudioSegment.empty()
+
+        # Convert text to musical notes
+        for char in text:
+            frequency = ascii_to_frequency(char)
+            if frequency > 0:
+                duration = 250  # Duration of the note in milliseconds
+                # Use Sine waveform for the music
+                note = Sine(frequency).to_audio_segment(duration=duration)
+                audio += note
+
+        # Reduce volume (example: reduce by 10 dB)
+        volume_reduction_db = -20  # Negative value reduces volume
+        audio = audio.apply_gain(volume_reduction_db)
+
+        # Export the audio as an MP3 file
+        output_file = io.BytesIO()
+        audio.export(output_file, format="mp3")
+
+        # Set the file pointer to the beginning
+        output_file.seek(0)
+
+        # Create a response object
+        response = make_response(output_file.read())
+
+        # Set the Content-Disposition and Content-Type headers
+        response.headers["Content-Disposition"] = "attachment; filename=output_music.mp3"
+        response.headers['Content-Type'] = 'audio/mpeg'
+
+        return response
+
+    return "Please provide text in the 'ascii_text' parameter."
+
+def ascii_to_midi(ascii_text):
+    # Define the mapping between ASCII characters and notes
+    notes = {
+    'A': 60,
+    'B': 62,
+    'C': 64,
+    'D': 65,
+    'E': 67,
+    'F': 69,
+    'G': 71,
+    'H': 72,
+    'I': 74,
+    'J': 76,
+    'K': 77,
+    'L': 79,
+    'M': 81,
+    'N': 83,
+    'O': 84,
+    'P': 86,
+    'Q': 88,
+    'R': 89,
+    'S': 91,
+    'T': 93,
+    'U': 94,
+    'V': 96,
+    'W': 98,
+    'X': 100,
+    'Y': 101,
+    'Z': 103,
+    'a': 72,
+    'b': 74,
+    'c': 76,
+    'd': 77,
+    'e': 79,
+    'f': 81,
+    'g': 83,
+    'h': 84,
+    'i': 86,
+    'j': 88,
+    'k': 89,
+    'l': 91,
+    'm': 93,
+    'n': 94,
+    'o': 96,
+    'p': 98,
+    'q': 100,
+    'r': 101,
+    's': 103,
+    't': 105,
+    'u': 106,
+    'v': 108,
+    'w': 110,
+    'x': 112,
+    'y': 113,
+    'z': 115,
+    '0': 48,
+    '1': 50,
+    '2': 52,
+    '3': 53,
+    '4': 55,
+    '5': 57,
+    '6': 59,
+    '7': 60,
+    '8': 62,
+    '9': 64,
+    '.': 40,
+    '-': 42,
+    '_': 44,
+    '?': 46,
+    '/': 48,
+    '!': 50,
+    '@': 52,
+    '#': 54,
+    '$': 56,
+    '%': 58,
+    '^': 60,
+    '&': 62,
+    '*': 64,
+    '+': 66,
+    '=': 68,
+    '{': 70,
+    '}': 72,
+    '[': 74,
+    ']': 76,
+    '\\': 78,
+    '|': 80,
+    ':': 82,
+    ';': 84,
+    '<': 86,
+    '>': 88,
+    ' ': 90,
+    '~': 92,
+    "'": 94,
+    '"': 96
+    }
+    # Create a new MIDI file
+    MyMIDI = MIDIFile(1)
+    # Add a track
+    track = 0
+    MyMIDI.addTrackName(track, 0, "Sample Track")
+    MyMIDI.addTempo(track, 0, 350)
+    # Set the current time to 0
+    time = 0
+    for c in ascii_text:
+        if c.upper() in notes:
+            # Add the note to the MIDI file
+            MyMIDI.addNote(track, 0, notes[c.upper()], time, 1, 100)
+            # Increase the time
+            time += 1
+    return MyMIDI
+
+@app.route('/play', methods=['GET'])
+def play():
+    ascii_text = request.args.get('ascii_text')
+    if ascii_text:
+        my_midi = ascii_to_midi(ascii_text)
+        # create a BytesIO object
+        output_file = io.BytesIO()
+        # write the MIDI data to the BytesIO object
+        my_midi.writeFile(output_file)
+        # set the file pointer to the beginning
+        output_file.seek(0)
+        # create a response object
+        response = make_response(output_file.read())
+        # set the Content-Disposition header to indicate that the file should be downloaded
+        response.headers["Content-Disposition"] = "attachment; filename=output.mid"
+        response.headers['Content-Type'] = 'audio/midi'
+        return response
+    else:
+        return "Please provide a valid ASCII code in the GET request"
+@app.route('/ping',methods= ['GET'])
+def ping():
+    return 'HEALTHCHECK'
+
+if __name__ == '__main__':
+    app.run(debug=False,port=8083)
+
+
+
+
+
+@app.route("/playmp3", methods=["GET"])
+def ascii_to_music_bytes():
+    text = request.args.get("ascii_text")
+
+    if text is not None:
+        # Initialize an empty audio segment
+        audio = AudioSegment.empty()
+
+        # Convert text to musical notes
+        for char in text:
+            frequency = ascii_to_frequency(char)
+            if frequency > 0:
+                duration = 250  # Duration of the note in milliseconds
+                # Use Sine waveform for the music
+                note = Sine(frequency).to_audio_segment(duration=duration)
+                audio += note
+
+        # Reduce volume (example: reduce by 10 dB)
+        volume_reduction_db = -20  # Negative value reduces volume
+        audio = audio.apply_gain(volume_reduction_db)
+
+        # Export the audio as an MP3 file
+        output_file = io.BytesIO()
+        audio.export(output_file, format="mp3")
+
+        # Set the file pointer to the beginning
+        output_file.seek(0)
+
+        # Create a response object
+        response = make_response(output_file.read())
+
+        # Set the Content-Disposition and Content-Type headers
+        response.headers["Content-Disposition"] = "attachment; filename=output_music.mp3"
+        response.headers['Content-Type'] = 'audio/mpeg'
+
+        return response
+
+    return "Please provide text in the 'ascii_text' parameter."
+
+def ascii_to_midi(ascii_text):
+    # Define the mapping between ASCII characters and notes
+    notes = {
+    'A': 60,
+    'B': 62,
+    'C': 64,
+    'D': 65,
+    'E': 67,
+    'F': 69,
+    'G': 71,
+    'H': 72,
+    'I': 74,
+    'J': 76,
+    'K': 77,
+    'L': 79,
+    'M': 81,
+    'N': 83,
+    'O': 84,
+    'P': 86,
+    'Q': 88,
+    'R': 89,
+    'S': 91,
+    'T': 93,
+    'U': 94,
+    'V': 96,
+    'W': 98,
+    'X': 100,
+    'Y': 101,
+    'Z': 103,
+    'a': 72,
+    'b': 74,
+    'c': 76,
+    'd': 77,
+    'e': 79,
+    'f': 81,
+    'g': 83,
+    'h': 84,
+    'i': 86,
+    'j': 88,
+    'k': 89,
+    'l': 91,
+    'm': 93,
+    'n': 94,
+    'o': 96,
+    'p': 98,
+    'q': 100,
+    'r': 101,
+    's': 103,
+    't': 105,
+    'u': 106,
+    'v': 108,
+    'w': 110,
+    'x': 112,
+    'y': 113,
+    'z': 115,
+    '0': 48,
+    '1': 50,
+    '2': 52,
+    '3': 53,
+    '4': 55,
+    '5': 57,
+    '6': 59,
+    '7': 60,
+    '8': 62,
+    '9': 64,
+    '.': 40,
+    '-': 42,
+    '_': 44,
+    '?': 46,
+    '/': 48,
+    '!': 50,
+    '@': 52,
+    '#': 54,
+    '$': 56,
+    '%': 58,
+    '^': 60,
+    '&': 62,
+    '*': 64,
+    '+': 66,
+    '=': 68,
+    '{': 70,
+    '}': 72,
+    '[': 74,
+    ']': 76,
+    '\\': 78,
+    '|': 80,
+    ':': 82,
+    ';': 84,
+    '<': 86,
+    '>': 88,
+    ' ': 90,
+    '~': 92,
+    "'": 94,
+    '"': 96
+    }
+    # Create a new MIDI file
+    MyMIDI = MIDIFile(1)
+    # Add a track
+    track = 0
+    MyMIDI.addTrackName(track, 0, "Sample Track")
+    MyMIDI.addTempo(track, 0, 350)
+    # Set the current time to 0
+    time = 0
+    for c in ascii_text:
+        if c.upper() in notes:
+            # Add the note to the MIDI file
+            MyMIDI.addNote(track, 0, notes[c.upper()], time, 1, 100)
+            # Increase the time
+            time += 1
+    return MyMIDI
+
+@app.route('/play', methods=['GET'])
+def play():
+    ascii_text = request.args.get('ascii_text')
+    if ascii_text:
+        my_midi = ascii_to_midi(ascii_text)
+        # create a BytesIO object
+        output_file = io.BytesIO()
+        # write the MIDI data to the BytesIO object
+        my_midi.writeFile(output_file)
+        # set the file pointer to the beginning
+        output_file.seek(0)
+        # create a response object
+        response = make_response(output_file.read())
+        # set the Content-Disposition header to indicate that the file should be downloaded
+        response.headers["Content-Disposition"] = "attachment; filename=output.mid"
+        response.headers['Content-Type'] = 'audio/midi'
+        return response
+    else:
+        return "Please provide a valid ASCII code in the GET request"
+@app.route('/ping',methods= ['GET'])
+def ping():
+    return 'HEALTHCHECK'
+
+if __name__ == '__main__':
+    app.run(debug=False,port=8083)
